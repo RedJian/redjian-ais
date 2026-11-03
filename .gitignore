@@ -1,0 +1,36 @@
+# 依赖
+node_modules/
+
+# 打包产物
+dist/
+*.exe
+
+# 运行时数据（登录态、Cookie 等敏感信息，绝不能提交）
+AI-Compare-Data/
+*.user-data/
+
+# 文档生成流水线的中间产物
+output/
+
+# 推广/介绍类文件（非软件运行所需，不随仓库开源）
+介绍页面.html
+公众号文章-*.md
+docs-images/
+
+# 工作区元数据
+.workbuddy/
+
+# 日志
+*.log
+logs/
+
+# 系统/编辑器
+.DS_Store
+Thumbs.db
+*.tmp
+.vscode/
+.idea/
+
+# 环境
+.env
+.env.*

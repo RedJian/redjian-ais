@@ -1,0 +1,3069 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https: http:;" />
+  <title>红笺-群问AI</title>
+  <style>
+    /* ==================================================================
+       布局：左侧面板栏 + 中间 AI 面板网格（每行最多 3 个）+ 右侧博客栏
+       视觉：液态玻璃（半透明 + 背景模糊 + 高光描边 + 柔和投影）
+       ================================================================== */
+    :root {
+      --text: #2b2436;
+      --sub: #5f5872;
+      --muted: #8d86a0;
+      --accent: #e0455a;
+      --accent-2: #f0795f;
+      --accent-soft: rgba(224, 69, 90, 0.12);
+      --ok: #0f9d76;
+      --err: #d64545;
+      --warn: #c8871a;
+
+      --panel: #ffffff;
+      --radius: 20px;
+      --radius-sm: 12px;
+
+      /* 玻璃材质 */
+      --glass: rgba(255, 255, 255, 0.46);
+      --glass-strong: rgba(255, 255, 255, 0.68);
+      --glass-line: rgba(255, 255, 255, 0.78);
+      --glass-blur: blur(22px) saturate(175%);
+      --glass-shadow: 0 12px 34px rgba(70, 48, 92, 0.13);
+      --glass-inset: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+
+      --titlebar-h: 40px;
+      --sidebar-w: 224px;
+      --sidebar-w-collapsed: 64px;
+      --pane-bar-h: 42px;
+      --pane-gap: 10px;
+    }
+
+    * { box-sizing: border-box; }
+
+    [hidden] { display: none !important; }
+
+    html, body {
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei",
+        "PingFang SC", "Hiragino Sans GB", "Source Han Sans SC", sans-serif;
+      font-size: 13px;
+      -webkit-font-smoothing: antialiased;
+      user-select: none;
+      /* 玻璃后面要有颜色才好看：四团柔光 + 浅底 */
+      background:
+        radial-gradient(1100px 760px at 10% 4%, #ffc6d6 0%, rgba(255, 198, 214, 0) 60%),
+        radial-gradient(980px 720px at 94% 8%, #c3d6ff 0%, rgba(195, 214, 255, 0) 62%),
+        radial-gradient(1000px 820px at 84% 96%, #b6e2f6 0%, rgba(182, 226, 246, 0) 60%),
+        radial-gradient(920px 720px at 14% 98%, #dccdff 0%, rgba(220, 205, 255, 0) 62%),
+        linear-gradient(160deg, #f4f5fb 0%, #e9edf8 100%);
+      background-attachment: fixed;
+    }
+
+    button {
+      font-family: inherit;
+      font-size: 12px;
+      color: var(--sub);
+      cursor: pointer;
+    }
+
+    button:disabled { cursor: default; }
+
+    .app {
+      flex: 1 1 auto;
+      display: flex;
+      gap: 12px;
+      /* 顶部不留白：内容卡片紧贴自绘标题栏，像 macOS 的 unified toolbar */
+      padding: 0 12px 12px;
+      min-height: 0;
+    }
+
+    /* ============================== 自绘标题栏 ==============================
+       无边框窗口（main.js: frame: false）自带一条可拖动的顶栏：
+       左边是 macOS 风格红绿灯，中间是标题，整条都是拖动区。
+       ====================================================================== */
+    .titlebar {
+      position: relative;
+      z-index: 70;
+      flex: 0 0 auto;
+      height: var(--titlebar-h);
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      -webkit-app-region: drag;
+      app-region: drag;
+    }
+
+    /* 底部一条极淡的高光线，让顶栏有「悬浮在玻璃上」的层次 */
+    .titlebar::after {
+      content: '';
+      position: absolute;
+      left: 16px;
+      right: 16px;
+      bottom: 0;
+      height: 1px;
+      background: linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0) 0%,
+        rgba(255, 255, 255, 0.62) 50%,
+        rgba(255, 255, 255, 0) 100%
+      );
+      pointer-events: none;
+    }
+
+    .tl-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      /* 按钮必须退出拖动区，否则点击会被当成拖窗口 */
+      -webkit-app-region: no-drag;
+      app-region: no-drag;
+    }
+
+    .tl {
+      position: relative;
+      width: 12px;
+      height: 12px;
+      padding: 0;
+      border: none;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      font-family: "Segoe UI", -apple-system, sans-serif;
+      font-size: 9px;
+      font-weight: 700;
+      line-height: 1;
+      color: rgba(52, 40, 64, 0.62);
+      transition: filter 0.12s ease, transform 0.1s ease, background 0.18s ease,
+        box-shadow 0.18s ease;
+    }
+
+    .tl::after {
+      content: '';
+      opacity: 0;
+      transition: opacity 0.12s ease;
+      pointer-events: none;
+    }
+
+    .tl-close { background: #ff5f57; box-shadow: inset 0 0 0 0.5px rgba(120, 0, 0, 0.2); }
+    .tl-close::after { content: '×'; }
+
+    .tl-min { background: #febc2e; box-shadow: inset 0 0 0 0.5px rgba(150, 96, 0, 0.2); }
+    .tl-min::after { content: '–'; }
+
+    .tl-max { background: #28c840; box-shadow: inset 0 0 0 0.5px rgba(0, 110, 40, 0.2); }
+    .tl-max::after { content: '+'; }
+
+    /* 悬停整组才显示符号，和 macOS 一致 */
+    .tl-group:hover .tl::after { opacity: 1; }
+    .tl:active { transform: scale(0.9); filter: brightness(0.94); }
+
+    /* 窗口失焦：三个点一起变灰，符号隐藏 */
+    body.win-blur .tl {
+      background: #d8d5dd;
+      box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.07);
+    }
+    body.win-blur .tl::after { opacity: 0; }
+    body.win-blur .tb-title { color: #9d97a8; text-shadow: none; }
+
+    .tb-title {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      max-width: 46%;
+      font-size: 12.5px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+      color: #5b5368;
+      text-shadow: 0 1px 0 rgba(255, 255, 255, 0.75);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      /* 标题只做展示，别挡住双击最大化 / 拖动 */
+      pointer-events: none;
+    }
+
+    /* ============================== 左侧面板栏 ============================== */
+    .sidebar {
+      position: relative; /* 背景图层 .sb-bg 以它为定位基准 */
+      /* 博客 + 底部按钮区的高度，背景图靠它锚定在「博客上方」；
+         由 renderer 启动时测量 .sb-blogs + .sb-foot 后写回，缺省给个近似值 */
+      --sb-bottom-h: 288px;
+      /* 背景图相对博客顶部再往下沉多少（书本停在博客上方一点） */
+      --sb-bg-drop: 62px;
+      flex: 0 0 auto;
+      width: var(--sidebar-w);
+      display: flex;
+      flex-direction: column;
+      border-radius: var(--radius);
+      background: var(--glass);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      border: 1px solid var(--glass-line);
+      box-shadow: var(--glass-shadow), var(--glass-inset);
+      overflow: hidden;
+      transition: width 0.2s cubic-bezier(0.2, 0.8, 0.3, 1);
+      z-index: 4;
+    }
+
+    .sidebar.is-collapsed { width: var(--sidebar-w-collapsed); }
+
+    /* 侧栏背景图：白底图用 multiply 融进玻璃，只留下字与书本的墨色 */
+    .sb-bg {
+      position: absolute;
+      /* 底部向上抬「博客 + 按钮区」的高度，再往下放一截（--sb-bg-drop），
+         让图片整体下移，书本落在博客上方一点即可，不随窗口高低偏移 */
+      inset: 0 0 calc(var(--sb-bottom-h) - var(--sb-bg-drop, 0px)) 0;
+      z-index: 0;
+      pointer-events: none;
+      background: url('assets/sidebar-bg.png') no-repeat center bottom;
+      background-size: 96% auto;
+      mix-blend-mode: multiply;
+      opacity: 0.36;
+      /* 顶部淡入，别在图开始的地方切一刀 */
+      -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 22%, #000 100%);
+      mask-image: linear-gradient(180deg, transparent 0%, #000 22%, #000 100%);
+      transition: opacity 0.2s ease;
+    }
+
+    /* 内容压在背景图之上 */
+    .sb-head,
+    .sb-section,
+    .sb-list,
+    .sb-blogs,
+    .sb-foot {
+      position: relative;
+      z-index: 1;
+    }
+
+    /* 收成图标条后不需要背景图，避免糊住小图标 */
+    .sidebar.is-collapsed .sb-bg { opacity: 0; }
+
+    .sb-head {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 13px 11px 11px;
+      min-height: 56px;
+    }
+
+    .sb-logo {
+      flex: 0 0 auto;
+      width: 30px;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 10px;
+      background: linear-gradient(140deg, var(--accent) 0%, #c93a6b 100%);
+      box-shadow: 0 8px 18px rgba(201, 58, 107, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+    }
+
+    .sb-title {
+      flex: 1 1 auto;
+      min-width: 0;
+      line-height: 1.32;
+    }
+
+    .sb-title strong {
+      display: block;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+      color: #2a2233;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .sb-title span {
+      display: block;
+      font-size: 10.5px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .sb-toggle {
+      flex: 0 0 auto;
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      border: none;
+      border-radius: 7px;
+      background: transparent;
+      color: #8b8499;
+      font-size: 14px;
+      line-height: 1;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+
+    .sb-toggle:hover { background: rgba(255, 255, 255, 0.7); color: var(--text); }
+
+    .sidebar.is-collapsed .sb-head {
+      flex-direction: column;
+      gap: 7px;
+      padding: 12px 0 8px;
+      min-height: 0;
+    }
+
+    .sidebar.is-collapsed .sb-title { display: none; }
+
+    .sb-section {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      padding: 4px 14px 4px;
+      height: 26px;
+    }
+
+    .sb-label {
+      font-size: 10.5px;
+      font-weight: 600;
+      letter-spacing: 0.7px;
+      color: #9a93aa;
+      white-space: nowrap;
+    }
+
+    .sb-add {
+      flex: 0 0 auto;
+      width: 20px;
+      height: 20px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid rgba(255, 255, 255, 0.85);
+      border-radius: 7px;
+      background: rgba(255, 255, 255, 0.55);
+      color: #6b6478;
+      font-size: 13px;
+      line-height: 1;
+      transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    }
+
+    .sb-add:hover { background: var(--accent-soft); border-color: rgba(224, 69, 90, 0.35); color: var(--accent); }
+
+    .sidebar.is-collapsed .sb-section { justify-content: center; padding: 2px 0; height: 10px; }
+    .sidebar.is-collapsed .sb-label,
+    .sidebar.is-collapsed .sb-add { display: none; }
+
+    .sb-list {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 2px 8px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .sb-item {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      height: 36px;
+      padding: 0 9px;
+      border: 1px solid transparent;
+      border-radius: 11px;
+      background: transparent;
+      color: #453d55;
+      font-size: 12.5px;
+      text-align: left;
+      /* 列表行是 div（行内还要放删除按钮，按钮不能嵌套按钮） */
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+    }
+
+    .sb-item:focus-visible {
+      outline: 2px solid rgba(224, 69, 90, 0.45);
+      outline-offset: 1px;
+    }
+
+    .sb-item:hover {
+      background: rgba(255, 255, 255, 0.62);
+      border-color: rgba(255, 255, 255, 0.8);
+      color: var(--text);
+    }
+
+    .sb-item.is-active {
+      background: rgba(255, 255, 255, 0.78);
+      border-color: rgba(255, 255, 255, 0.9);
+      box-shadow: 0 4px 14px rgba(70, 48, 92, 0.1), inset 0 1px 0 #fff;
+    }
+
+    .sb-avatar {
+      flex: 0 0 auto;
+      width: 23px;
+      height: 23px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1;
+      background: var(--accent-soft);
+      color: var(--accent);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+    }
+
+    .sb-text {
+      flex: 1 1 auto;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .sb-dot {
+      flex: 0 0 auto;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #c9c2d6;
+      transition: background 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .sb-dot.is-running { background: var(--warn); box-shadow: 0 0 0 3px rgba(200, 135, 26, 0.18); }
+    .sb-dot.is-ok { background: var(--ok); box-shadow: 0 0 0 3px rgba(15, 157, 118, 0.16); }
+    .sb-dot.is-err { background: var(--err); box-shadow: 0 0 0 3px rgba(214, 69, 69, 0.16); }
+
+    /* 行尾的删除按钮：平时淡显，悬停变清晰，悬停自身变红 */
+    .sb-del {
+      flex: 0 0 auto;
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      background: transparent;
+      color: #8f879c;
+      opacity: 0.6;
+      transition: opacity 0.14s ease, background 0.14s ease, border-color 0.14s ease,
+        color 0.14s ease, transform 0.14s ease;
+    }
+
+    .sb-item:hover .sb-del { opacity: 1; }
+
+    .sb-del:hover {
+      background: var(--accent-soft);
+      border-color: rgba(224, 69, 90, 0.32);
+      color: var(--accent);
+      transform: scale(1.06);
+    }
+
+    .sb-del:active { transform: scale(0.94); }
+
+    .sb-del:disabled {
+      opacity: 0 !important;
+      pointer-events: none;
+    }
+
+    .sb-del svg { display: block; }
+
+    .sidebar.is-collapsed .sb-item {
+      justify-content: center;
+      padding: 0;
+      height: 40px;
+      border-radius: 13px;
+    }
+
+    .sidebar.is-collapsed .sb-text,
+    .sidebar.is-collapsed .sb-dot,
+    .sidebar.is-collapsed .sb-del { display: none; }
+
+    .sb-foot {
+      flex: 0 0 auto;
+      padding: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.6);
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .sb-foot .sb-item { height: 34px; }
+
+    /* 博客入口：和面板列表同款样式，只是多一个外链箭头 */
+    .sb-blogs {
+      flex: 0 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 6px 8px 4px;
+      border-top: 1px solid rgba(255, 255, 255, 0.6);
+    }
+
+    .sb-blogs .sb-label { padding: 0 6px 3px; }
+
+    .sb-blog {
+      height: 32px;
+      font-size: 12px;
+    }
+
+    .sb-blog .sb-avatar {
+      width: 21px;
+      height: 21px;
+      font-size: 10px;
+    }
+
+    .sb-ext {
+      flex: 0 0 auto;
+      margin-left: auto;
+      font-size: 11px;
+      color: #b0a9bf;
+      opacity: 0.85;
+    }
+
+    .sidebar.is-collapsed .sb-blogs {
+      align-items: center;
+      padding: 6px 0 4px;
+    }
+
+    .sidebar.is-collapsed .sb-ext { display: none; }
+
+    /* ============================ 微信公众号 ============================
+       在博客模块下新增一行，悬停时二维码图片从无到有慢慢浮现，移开即消失。 */
+    .sb-wechat {
+      flex: 0 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 4px 8px 4px;
+      border-top: 1px solid rgba(255, 255, 255, 0.6);
+    }
+
+    .sb-wechat .sb-label { padding: 0 6px 3px; }
+
+    /* 悬停触发区：一行带「微信公众号」文字的行 */
+    .sb-wechat-item {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 32px;
+      padding: 0 9px;
+      border: 1px solid transparent;
+      border-radius: 11px;
+      cursor: pointer;
+      font-size: 12px;
+      color: #453d55;
+      transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+    }
+
+    .sb-wechat-item:hover {
+      background: rgba(255, 255, 255, 0.62);
+      border-color: rgba(255, 255, 255, 0.8);
+      color: var(--text);
+    }
+
+    .sb-wechat-item .sb-avatar {
+      width: 21px;
+      height: 21px;
+      font-size: 10px;
+      background: rgba(7, 193, 96, 0.14);
+      color: #07c160;
+    }
+
+    /* 二维码浮层：放在 body 级，position: fixed 定位，避免被侧栏 overflow:hidden 裁掉。
+       显示/隐藏由 .show 类控制，位置由 JS 通过 --qr-x / --qr-y 写入。 */
+    .sb-wechat-qr {
+      position: fixed;
+      left: var(--qr-x, 240px);
+      top: var(--qr-y, 50%);
+      z-index: 60;
+      width: 252px;
+      padding: 12px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.98); /* 更实一点，确保二维码清晰可辨 */
+      backdrop-filter: blur(20px) saturate(170%);
+      -webkit-backdrop-filter: blur(20px) saturate(170%);
+      border: 1px solid rgba(255, 255, 255, 0.95);
+      box-shadow: 0 18px 44px rgba(70, 48, 92, 0.24), inset 0 1px 0 #fff;
+      /* 初始状态：透明 + 轻微右移 + 缩小，配合过渡出「慢慢浮现」的效果 */
+      opacity: 0;
+      transform: translateY(-50%) translateX(-6px) scale(0.94);
+      pointer-events: none;
+      transition: opacity 0.32s ease, transform 0.32s cubic-bezier(0.22, 0.8, 0.3, 1);
+    }
+
+    .sb-wechat-qr.show {
+      opacity: 1;
+      transform: translateY(-50%) translateX(0) scale(1);
+    }
+
+    .sb-wechat-qr img {
+      display: block;
+      width: 100%;
+      height: auto;
+      border-radius: 11px;
+    }
+
+    .sb-wechat-qr .qr-caption {
+      margin-top: 8px;
+      font-size: 13px;
+      line-height: 1.5;
+      color: #6b6478;
+      text-align: center;
+    }
+
+    .sb-wechat-qr .qr-caption strong { color: #3a3350; }
+
+    /* 收起侧栏时，隐藏「微信公众号」文字 */
+    .sidebar.is-collapsed .sb-wechat {
+      align-items: center;
+      padding: 4px 0;
+    }
+
+    .sidebar.is-collapsed .sb-wechat .sb-label,
+    .sidebar.is-collapsed .sb-wechat-item .sb-text { display: none; }
+
+    .sb-ico {
+      flex: 0 0 auto;
+      width: 23px;
+      height: 23px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      line-height: 1;
+      opacity: 0.7;
+    }
+
+    /* ================================ 主区域 ================================ */
+    .main {
+      flex: 1 1 auto;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .viewport {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+    }
+
+    /* 面板区：绝对定位画布
+       —— 这样每一栏的 left/width 都能单独控制（拖动缝隙、沉浸模式），
+          又不用移动 DOM（移动 <webview> 会让网页重新加载）。
+          滚动高度由 .snap-track 里的占位行撑起来，翻页吸附仍然生效。 */
+    .columns {
+      position: relative;
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      overscroll-behavior: contain;
+      scroll-snap-type: y mandatory;
+      scrollbar-gutter: stable;
+    }
+
+    /* 只用来撑出滚动高度 + 提供每页的吸附点，本身不显示内容 */
+    .snap-track {
+      position: relative;
+      width: 100%;
+      pointer-events: none;
+    }
+
+    .snap-row {
+      height: var(--row-h, 100%);
+      scroll-snap-align: start;
+      scroll-snap-stop: always;
+    }
+
+    .snap-row + .snap-row { margin-top: var(--pane-gap); }
+
+    /* 栏与栏之间的拖动条层 */
+    .gutters {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 6;
+      pointer-events: none;
+    }
+
+    .gutter {
+      position: absolute;
+      width: 14px;
+      pointer-events: auto;
+      cursor: col-resize;
+      touch-action: none;
+      border-radius: 8px;
+    }
+
+    .gutter::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 3px;
+      height: 42px;
+      border-radius: 999px;
+      background: linear-gradient(
+        180deg,
+        rgba(224, 69, 90, 0) 0%,
+        rgba(224, 69, 90, 0.5) 50%,
+        rgba(224, 69, 90, 0) 100%
+      );
+      opacity: 0;
+      transition: opacity 0.16s ease, height 0.16s ease;
+    }
+
+    .gutter:hover::after,
+    .gutter.is-active::after {
+      opacity: 1;
+      height: 76px;
+    }
+
+    /* 沉浸模式下不接受拖动调宽（拖了也看不出效果） */
+    .columns.is-focus-mode .gutter { display: none; }
+
+    body.is-resizing { cursor: col-resize; }
+    body.is-resizing .gutter::after { opacity: 1; }
+
+    /* 拖动时铺满窗口的透明层：指针一直在它上面，不会被 webview 抢走 */
+    .drag-shield {
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+      cursor: col-resize;
+      background: transparent;
+    }
+
+    /* 每栏是一张悬浮玻璃卡片 */
+    .pane {
+      /* 位置和尺寸全部由 layoutPanes() 写入（left/top/width/height） */
+      position: absolute;
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      background: var(--glass-strong);
+      border: 1px solid var(--glass-line);
+      border-radius: 16px;
+      box-shadow: 0 10px 26px rgba(70, 48, 92, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.85);
+      overflow: hidden;
+      scroll-snap-align: none;
+      transition: box-shadow 0.2s ease;
+    }
+
+    /* 沉浸模式里被放大的那一栏：描一圈主色，明确「现在在看它」 */
+    .pane.is-zoomed {
+      box-shadow: 0 0 0 2px rgba(224, 69, 90, 0.5), 0 16px 36px rgba(70, 48, 92, 0.16),
+        inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    }
+
+    /* 从左侧栏点进来的「定位」高亮 */
+    .pane.is-focus {
+      box-shadow: 0 0 0 2px var(--accent), 0 12px 30px rgba(224, 69, 90, 0.2);
+    }
+
+    /* ---------------------------- 每栏工具栏 ---------------------------- */
+    .pane-bar {
+      flex: 0 0 auto;
+      height: var(--pane-bar-h);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 8px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.78) 0%, rgba(255, 255, 255, 0.56) 100%);
+      backdrop-filter: blur(16px) saturate(160%);
+      -webkit-backdrop-filter: blur(16px) saturate(160%);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.72);
+      box-shadow: inset 0 2px 0 var(--accent);
+      z-index: 3;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      height: 25px;
+      padding: 0 8px;
+      border-radius: 9px;
+      background: var(--accent-soft);
+      border: 1px solid rgba(255, 255, 255, 0.65);
+      color: var(--accent);
+      font-weight: 650;
+      font-size: 12px;
+      white-space: nowrap;
+      flex: 0 0 auto;
+      max-width: 100px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .brand .dot {
+      width: 7px;
+      height: 7px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 6px var(--accent);
+    }
+
+    .brand .name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .nav {
+      display: flex;
+      gap: 1px;
+      flex: 0 0 auto;
+    }
+
+    .icon-btn {
+      width: 25px;
+      height: 25px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: transparent;
+      font-size: 13px;
+      line-height: 1;
+      transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    }
+
+    .icon-btn:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.8);
+      border-color: rgba(255, 255, 255, 0.9);
+      color: var(--text);
+    }
+
+    .icon-btn:active:not(:disabled) { background: rgba(255, 255, 255, 0.95); }
+    .icon-btn:disabled { opacity: 0.28; cursor: default; }
+
+    .address {
+      flex: 1 1 auto;
+      min-width: 0;
+      height: 27px;
+      padding: 0 9px;
+      border: 1px solid rgba(255, 255, 255, 0.85);
+      border-radius: 9px;
+      background: rgba(255, 255, 255, 0.55);
+      color: #4a4258;
+      font-size: 11.5px;
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", monospace;
+      outline: none;
+      user-select: text;
+      box-shadow: inset 0 1px 2px rgba(70, 48, 92, 0.06);
+      transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .address:focus {
+      background: rgba(255, 255, 255, 0.95);
+      border-color: rgba(224, 69, 90, 0.55);
+      box-shadow: 0 0 0 3px rgba(224, 69, 90, 0.14);
+    }
+
+    .ghost-btn {
+      flex: 0 0 auto;
+      width: 26px;
+      height: 27px;
+      padding: 0;
+      border: 1px solid rgba(255, 255, 255, 0.85);
+      border-radius: 9px;
+      background: rgba(255, 255, 255, 0.55);
+      font-size: 12px;
+      transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+    }
+
+    .ghost-btn:hover { background: rgba(255, 255, 255, 0.92); border-color: #fff; color: var(--text); }
+
+    /* 悬停时出现在工具栏最右侧的「放大」按钮 */
+    .pane-zoom {
+      flex: 0 0 auto;
+      width: 26px;
+      height: 27px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid transparent;
+      border-radius: 9px;
+      background: transparent;
+      color: #8a8398;
+      opacity: 0;
+      transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease,
+        border-color 0.15s ease;
+    }
+
+    .pane:hover .pane-zoom,
+    .pane.is-zoomed .pane-zoom,
+    .pane-zoom:focus-visible { opacity: 1; }
+
+    .pane-zoom:hover {
+      background: rgba(255, 255, 255, 0.92);
+      border-color: #fff;
+      color: var(--accent);
+    }
+
+    .pane-zoom svg { display: block; }
+
+    /* 栏被拖窄以后：先收起次要按钮，优先保住地址栏 */
+    .pane.is-narrow .nav [data-act="back"],
+    .pane.is-narrow .nav [data-act="forward"] { display: none; }
+    .pane.is-narrow .brand .name { display: none; }
+    .pane.is-narrow .brand { padding: 0 6px; }
+    .pane.is-narrow .ghost-btn { display: none; }
+
+    /* 沉浸模式里被收成细条的那两栏：只留首字头像 + 竖排名字 */
+    .pane.is-strip { cursor: pointer; }
+
+    .pane.is-strip:hover {
+      box-shadow: 0 0 0 2px var(--accent), 0 12px 26px rgba(224, 69, 90, 0.18);
+    }
+
+    .pane.is-strip .pane-bar { display: none; }
+    /* 网页不显示，但保留尺寸（webview 的宽高会被钉住，站点不会重排） */
+    .pane.is-strip .stage { visibility: hidden; }
+
+    .strip-badge {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 9px;
+      padding: 14px 4px 10px;
+      pointer-events: none;
+    }
+
+    .pane.is-strip .strip-badge { display: flex; }
+
+    .strip-avatar {
+      flex: 0 0 auto;
+      width: 26px;
+      height: 26px;
+      display: grid;
+      place-items: center;
+      border-radius: 9px;
+      font-size: 12px;
+      font-weight: 700;
+      background: var(--accent-soft);
+      color: var(--accent);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+    }
+
+    .strip-name {
+      writing-mode: vertical-rl;
+      text-orientation: mixed;
+      max-height: 46%;
+      overflow: hidden;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      color: var(--accent);
+      opacity: 0.85;
+    }
+
+    .strip-hint {
+      margin-top: auto;
+      font-size: 11px;
+      color: #a49dae;
+    }
+
+    /* 每栏的注入结果指示灯 */
+    .pane-state {
+      flex: 0 0 auto;
+      width: 7px;
+      height: 7px;
+      margin-left: 1px;
+      border-radius: 50%;
+      background: #cfc8da;
+      transition: background 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .pane-state.is-running { background: var(--warn); box-shadow: 0 0 0 3px rgba(200, 135, 26, 0.16); }
+    .pane-state.is-ok { background: var(--ok); box-shadow: 0 0 0 3px rgba(15, 157, 118, 0.15); }
+    .pane-state.is-err { background: var(--err); box-shadow: 0 0 0 3px rgba(214, 69, 69, 0.15); }
+
+    /* ------------------------------ 网页区 ------------------------------ */
+    .stage {
+      position: relative;
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      background: #fff;
+    }
+
+    .webview-host {
+      flex: 1 1 auto;
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+    }
+
+    .webview {
+      flex: 1 1 auto;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      border: 0;
+      background: #fff;
+    }
+
+    .loading {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255, 255, 255, 0.82);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.18s ease;
+    }
+
+    .loading.show { opacity: 1; }
+
+    .loading .spinner {
+      width: 15px;
+      height: 15px;
+      border: 2px solid rgba(224, 69, 90, 0.22);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ---------------------------- 底部输入区 ---------------------------- */
+    .composer {
+      flex: 0 0 auto;
+      padding: 0 2px 2px;
+      z-index: 3;
+    }
+
+    .composer-inner {
+      max-width: 1320px;
+      margin: 0 auto;
+    }
+
+    .composer-card {
+      background: var(--glass-strong);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      border: 1px solid var(--glass-line);
+      border-radius: 22px;
+      box-shadow: 0 16px 38px rgba(70, 48, 92, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+      padding: 7px 12px 8px;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .composer-card:focus-within {
+      border-color: rgba(255, 255, 255, 1);
+      box-shadow: 0 0 0 3px rgba(224, 69, 90, 0.14), 0 18px 40px rgba(70, 48, 92, 0.18),
+        inset 0 1px 0 #fff;
+    }
+
+    /* 可编辑 div：文字 + 内嵌图片缩略图 */
+    .editor {
+      min-height: 42px;
+      max-height: 118px;
+      overflow-y: auto;
+      padding: 4px 2px 2px;
+      outline: none;
+      font-size: 13.5px;
+      line-height: 1.58;
+      color: var(--text);
+      word-break: break-word;
+      overflow-wrap: anywhere;
+      user-select: text;
+      cursor: text;
+    }
+
+    .editor:empty::before {
+      content: attr(data-placeholder);
+      color: #a49cb4;
+      pointer-events: none;
+    }
+
+    /* 粘贴进来的图片缩略图：整体高度不超过 60px */
+    .img-chip {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      margin: 3px 6px 3px 0;
+      border: 1px solid rgba(255, 255, 255, 0.9);
+      border-radius: 10px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.6);
+      box-shadow: 0 4px 12px rgba(70, 48, 92, 0.12);
+      vertical-align: middle;
+      line-height: 0;
+    }
+
+    .img-chip img {
+      display: block;
+      max-height: 60px;
+      max-width: 120px;
+      object-fit: cover;
+    }
+
+    .chip-del {
+      position: absolute;
+      top: 2px;
+      right: 2px;
+      width: 16px;
+      height: 16px;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      border-radius: 50%;
+      background: rgba(18, 24, 38, 0.62);
+      color: #fff;
+      font-size: 11px;
+      line-height: 1;
+      opacity: 0;
+      transition: opacity 0.15s ease, background 0.15s ease;
+    }
+
+    .img-chip:hover .chip-del { opacity: 1; }
+    .chip-del:hover { background: rgba(214, 69, 69, 0.95); }
+
+    .composer-foot {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 5px;
+      padding-top: 7px;
+      border-top: 1px solid rgba(255, 255, 255, 0.7);
+    }
+
+    .tool-btn {
+      height: 27px;
+      padding: 0 10px;
+      border: 1px solid transparent;
+      border-radius: 9px;
+      background: transparent;
+      color: #6b6478;
+      transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    }
+
+    .tool-btn:hover {
+      background: rgba(255, 255, 255, 0.75);
+      border-color: rgba(255, 255, 255, 0.9);
+      color: var(--text);
+    }
+
+    .tool-btn:active { background: rgba(255, 255, 255, 0.95); }
+
+    .hint {
+      color: #a49cb4;
+      font-size: 11px;
+      margin-left: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .send-btn {
+      margin-left: auto;
+      height: 31px;
+      padding: 0 19px;
+      border: 1px solid rgba(255, 255, 255, 0.5);
+      border-radius: 12px;
+      background: linear-gradient(135deg, #f2685f 0%, #d83a68 100%);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 650;
+      letter-spacing: 0.3px;
+      box-shadow: 0 8px 20px rgba(216, 58, 104, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+      transition: filter 0.15s ease, transform 0.06s ease, opacity 0.15s ease;
+    }
+
+    .send-btn:hover:not(:disabled) { filter: brightness(1.06); }
+    .send-btn:active:not(:disabled) { transform: translateY(1px); }
+    .send-btn:disabled { opacity: 0.55; cursor: default; }
+
+    /* 状态行：展示各家各自的注入结果 */
+    .statusline {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      height: 20px;
+      padding: 3px 8px 0;
+      font-size: 11px;
+      color: #8f88a1;
+    }
+
+    .statusline .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-width: 0;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .statusline .status::before {
+      content: "";
+      width: 5px;
+      height: 5px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+      background: #c3bcd0;
+    }
+
+    .statusline .status.ok { color: var(--ok); }
+    .statusline .status.ok::before { background: var(--ok); }
+    .statusline .status.err { color: var(--err); }
+    .statusline .status.err::before { background: var(--err); }
+    .statusline .status.warn { color: var(--warn); }
+    .statusline .status.warn::before { background: var(--warn); }
+
+    .statusline .counter { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+
+    /* 分页器：面板超过一页（>3 个）时才出现，翻页 = 滚动一整屏 */
+    .pager {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .page-btn {
+      width: 19px;
+      height: 19px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid rgba(255, 255, 255, 0.8);
+      border-radius: 7px;
+      background: rgba(255, 255, 255, 0.55);
+      color: var(--sub);
+      font-size: 12px;
+      line-height: 1;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+
+    .page-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.95); color: var(--text); }
+    .page-btn:disabled { opacity: 0.34; cursor: default; }
+
+    .page-label {
+      min-width: 34px;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+      color: #8f88a1;
+      letter-spacing: 0.2px;
+    }
+
+    /* ================================ 设置抽屉 ================================ */
+    .drawer-mask {
+      position: fixed;
+      inset: var(--titlebar-h) 0 0 0;
+      z-index: 30;
+      background: rgba(46, 32, 62, 0.22);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.18s ease;
+    }
+
+    .drawer-mask.open { opacity: 1; pointer-events: auto; }
+
+    .drawer {
+      position: fixed;
+      top: calc(var(--titlebar-h) + 6px);
+      right: 12px;
+      bottom: 12px;
+      z-index: 31;
+      width: 436px;
+      max-width: 94vw;
+      display: flex;
+      flex-direction: column;
+      border-radius: 22px;
+      background: rgba(255, 255, 255, 0.82);
+      backdrop-filter: blur(30px) saturate(180%);
+      -webkit-backdrop-filter: blur(30px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.9);
+      box-shadow: 0 28px 60px rgba(40, 25, 60, 0.25), inset 0 1px 0 #fff;
+      transform: translateX(calc(100% + 24px));
+      transition: transform 0.26s cubic-bezier(0.2, 0.8, 0.3, 1);
+      overflow: hidden;
+    }
+
+    .drawer.open { transform: none; }
+
+    .drawer-head {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 54px;
+      padding: 0 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.7);
+    }
+
+    .drawer-head h2 {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .drawer-head .sub {
+      margin-left: 8px;
+      font-size: 11px;
+      color: var(--muted);
+      font-weight: 400;
+    }
+
+    .drawer-close {
+      width: 27px;
+      height: 27px;
+      padding: 0;
+      border: none;
+      border-radius: 8px;
+      background: transparent;
+      color: #8b8499;
+      font-size: 16px;
+      line-height: 1;
+    }
+
+    .drawer-close:hover { background: rgba(255, 255, 255, 0.8); color: var(--text); }
+
+    .drawer-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 14px 16px 18px;
+    }
+
+    .drawer-body section + section {
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1px solid rgba(255, 255, 255, 0.75);
+    }
+
+    .drawer-body h3 {
+      margin: 0 0 3px;
+      font-size: 12.5px;
+      font-weight: 650;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .drawer-body h3 .count {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--muted);
+    }
+
+    .tip {
+      margin: 0 0 10px;
+      font-size: 11px;
+      line-height: 1.6;
+      color: #8f88a1;
+    }
+
+    /* 已启用列表 */
+    .enabled-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .enabled-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 45px;
+      padding: 0 8px 0 10px;
+      border: 1px solid rgba(255, 255, 255, 0.85);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.55);
+      box-shadow: 0 4px 12px rgba(70, 48, 92, 0.06);
+    }
+
+    .enabled-row .idx {
+      flex: 0 0 auto;
+      width: 15px;
+      font-size: 11px;
+      color: #b0a9bf;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .enabled-row .meta {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    .enabled-row .meta strong {
+      display: block;
+      font-size: 12.5px;
+      font-weight: 650;
+      color: #2f2839;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .enabled-row .meta span {
+      display: block;
+      font-size: 10.5px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .row-btn {
+      flex: 0 0 auto;
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      background: transparent;
+      color: #8b8499;
+      font-size: 12px;
+      line-height: 1;
+      transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    }
+
+    .row-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.9); border-color: rgba(255, 255, 255, 1); color: var(--text); }
+    .row-btn:disabled { opacity: 0.3; }
+    .row-btn.danger:hover { background: #fdeff0; border-color: #f6d7d9; color: var(--err); }
+
+    /* 模型库 */
+    .library {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .model-card {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 10px;
+      border: 1px solid rgba(255, 255, 255, 0.85);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.55);
+      text-align: left;
+      box-shadow: 0 4px 12px rgba(70, 48, 92, 0.06);
+      transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .model-card:hover {
+      background: rgba(255, 255, 255, 0.85);
+      border-color: #fff;
+      box-shadow: 0 8px 20px rgba(70, 48, 92, 0.12);
+    }
+
+    .model-card .meta {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    .model-card .meta strong {
+      display: block;
+      font-size: 12.5px;
+      font-weight: 650;
+      color: #2f2839;
+    }
+
+    .model-card .meta span {
+      display: block;
+      font-size: 10px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .model-card .plus {
+      flex: 0 0 auto;
+      width: 21px;
+      height: 21px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 7px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 13px;
+      line-height: 1;
+    }
+
+    .model-card.is-added {
+      background: rgba(255, 255, 255, 0.35);
+      border-style: dashed;
+      opacity: 0.72;
+      cursor: default;
+      box-shadow: none;
+    }
+
+    .model-card.is-added .plus {
+      background: rgba(255, 255, 255, 0.7);
+      color: #a49cb4;
+      font-size: 10px;
+    }
+
+    /* 自定义模型 */
+    .custom-form {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+
+    .custom-form input {
+      height: 33px;
+      padding: 0 11px;
+      border: 1px solid rgba(255, 255, 255, 0.9);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.6);
+      color: var(--text);
+      font-size: 12px;
+      font-family: inherit;
+      outline: none;
+      user-select: text;
+      box-shadow: inset 0 1px 2px rgba(70, 48, 92, 0.06);
+      transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+    }
+
+    .custom-form input:focus {
+      background: rgba(255, 255, 255, 0.95);
+      border-color: rgba(224, 69, 90, 0.5);
+      box-shadow: 0 0 0 3px rgba(224, 69, 90, 0.13);
+    }
+
+    .primary-btn {
+      height: 33px;
+      border: 1px solid rgba(255, 255, 255, 0.45);
+      border-radius: 10px;
+      background: linear-gradient(135deg, #f2685f 0%, #d83a68 100%);
+      color: #fff;
+      font-size: 12.5px;
+      font-weight: 650;
+      box-shadow: 0 8px 18px rgba(216, 58, 104, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+      transition: filter 0.15s ease;
+    }
+
+    .primary-btn:hover { filter: brightness(1.06); }
+
+    .drawer-foot {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      height: 52px;
+      padding: 0 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.7);
+      background: rgba(255, 255, 255, 0.32);
+    }
+
+    .drawer-foot span { font-size: 10.5px; color: var(--muted); }
+
+    .link-btn {
+      height: 27px;
+      padding: 0 9px;
+      border: 1px solid rgba(255, 255, 255, 0.85);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.6);
+      color: var(--sub);
+      font-size: 11.5px;
+    }
+
+    .link-btn:hover { background: rgba(255, 255, 255, 0.95); color: var(--text); }
+
+    /* ============================== 首次使用教程 ============================== */
+    .tut-mask {
+      position: fixed;
+      inset: var(--titlebar-h) 0 0 0;
+      z-index: 40;
+      background: rgba(44, 30, 60, 0.26);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+
+    .tut-mask.open { opacity: 1; pointer-events: auto; }
+
+    .tut {
+      position: fixed;
+      left: 50%;
+      /* 遮罩从标题栏下方开始，对话框也就跟着在内容区里居中 */
+      top: calc(50% + var(--titlebar-h) / 2);
+      z-index: 41;
+      width: min(560px, 92vw);
+      max-height: 86vh;
+      display: flex;
+      flex-direction: column;
+      border-radius: 26px;
+      background: rgba(255, 255, 255, 0.84);
+      backdrop-filter: blur(34px) saturate(180%);
+      -webkit-backdrop-filter: blur(34px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.95);
+      box-shadow: 0 34px 80px rgba(40, 25, 60, 0.3), inset 0 1px 0 #fff;
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, -48%) scale(0.97);
+      transition: opacity 0.22s ease, transform 0.24s cubic-bezier(0.2, 0.8, 0.3, 1);
+      overflow: hidden;
+    }
+
+    .tut.open { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%) scale(1); }
+
+    .tut-head {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 20px 22px 14px;
+    }
+
+    .tut-logo {
+      flex: 0 0 auto;
+      width: 40px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 13px;
+      background: linear-gradient(140deg, var(--accent) 0%, #c93a6b 100%);
+      box-shadow: 0 10px 22px rgba(201, 58, 107, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+    }
+
+    .tut-head h2 {
+      margin: 0 0 2px;
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+    }
+
+    .tut-head p {
+      margin: 0;
+      font-size: 11.5px;
+      color: var(--muted);
+    }
+
+    .tut-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 2px 22px 4px;
+    }
+
+    .tut-steps {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .tut-steps li {
+      display: flex;
+      gap: 11px;
+      padding: 11px 13px;
+      border: 1px solid rgba(255, 255, 255, 0.9);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.55);
+      box-shadow: 0 4px 14px rgba(70, 48, 92, 0.05);
+    }
+
+    .tut-num {
+      flex: 0 0 auto;
+      width: 22px;
+      height: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 11.5px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .tut-steps strong {
+      display: block;
+      font-size: 12.5px;
+      font-weight: 650;
+      margin-bottom: 3px;
+      color: #2f2839;
+    }
+
+    .tut-steps p {
+      margin: 0;
+      font-size: 11.5px;
+      line-height: 1.65;
+      color: #6f6880;
+    }
+
+    .tut-foot {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 16px 22px 18px;
+      border-top: 1px solid rgba(255, 255, 255, 0.75);
+    }
+
+    .tut-foot .tipline {
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .tut-foot .primary-btn {
+      flex: 0 0 auto;
+      height: 36px;
+      padding: 0 22px;
+      border-radius: 12px;
+      font-size: 13px;
+    }
+
+    /* ============================== 免责声明 ==============================
+       视觉与主界面一致：毛玻璃卡片 + 浅蓝/紫渐变点缀 + 圆角。
+       z-index 高于教程浮层（40/41），首次启动时先弹声明、同意后再看教程。 */
+    .dlg-mask {
+      position: fixed;
+      inset: var(--titlebar-h) 0 0 0;
+      z-index: 44;
+      background:
+        radial-gradient(620px 420px at 22% 8%, rgba(122, 168, 255, 0.22), rgba(122, 168, 255, 0) 70%),
+        radial-gradient(620px 460px at 82% 92%, rgba(165, 139, 255, 0.24), rgba(165, 139, 255, 0) 70%),
+        rgba(44, 38, 74, 0.24);
+      backdrop-filter: blur(12px) saturate(160%);
+      -webkit-backdrop-filter: blur(12px) saturate(160%);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+
+    .dlg-mask.open { opacity: 1; pointer-events: auto; }
+
+    .dlg {
+      position: fixed;
+      left: 50%;
+      top: calc(50% + var(--titlebar-h) / 2);
+      z-index: 45;
+      width: min(640px, 92vw);
+      max-height: 86vh;
+      display: flex;
+      flex-direction: column;
+      border-radius: 26px;
+      background: linear-gradient(
+        168deg,
+        rgba(255, 255, 255, 0.92) 0%,
+        rgba(247, 249, 255, 0.86) 55%,
+        rgba(243, 243, 255, 0.88) 100%
+      );
+      backdrop-filter: blur(36px) saturate(190%);
+      -webkit-backdrop-filter: blur(36px) saturate(190%);
+      border: 1px solid rgba(255, 255, 255, 0.96);
+      box-shadow:
+        0 38px 92px rgba(46, 34, 92, 0.3),
+        0 2px 10px rgba(70, 60, 120, 0.08),
+        inset 0 1px 0 #fff;
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, -48%) scale(0.97);
+      transition: opacity 0.22s ease, transform 0.26s cubic-bezier(0.2, 0.8, 0.3, 1);
+      overflow: hidden;
+    }
+
+    /* 顶部一道蓝紫渐变高光，呼应主界面的浅蓝/紫 */
+    .dlg::before {
+      content: '';
+      position: absolute;
+      inset: 0 0 auto;
+      height: 3px;
+      background: linear-gradient(90deg, #7aa8ff 0%, #9d8bff 52%, #d6a6ff 100%);
+      opacity: 0.92;
+    }
+
+    .dlg.open { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%) scale(1); }
+
+    /* 打开时把焦点从底部输入框抢过来，避免在浮层后面偷偷打字 */
+    .dlg:focus { outline: none; }
+
+    .dlg-head {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 21px 22px 14px;
+    }
+
+    .dlg-logo {
+      flex: 0 0 auto;
+      width: 42px;
+      height: 42px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 14px;
+      background: linear-gradient(140deg, #6c8cff 0%, #a06bff 100%);
+      box-shadow: 0 10px 22px rgba(124, 108, 255, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+      color: #fff;
+    }
+
+    .dlg-heading h2 {
+      margin: 0 0 3px;
+      font-size: 16.5px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+    }
+
+    .dlg-heading p {
+      margin: 0;
+      font-size: 11.5px;
+      color: var(--muted);
+    }
+
+    .dlg-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 2px 22px 6px;
+    }
+
+    .dlg-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+    }
+
+    .dlg-list li {
+      display: flex;
+      gap: 11px;
+      padding: 11px 13px;
+      border: 1px solid rgba(255, 255, 255, 0.94);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.62);
+      box-shadow: 0 4px 14px rgba(70, 60, 120, 0.05);
+    }
+
+    .dlg-num {
+      flex: 0 0 auto;
+      width: 22px;
+      height: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      background: linear-gradient(140deg, rgba(122, 168, 255, 0.2), rgba(165, 139, 255, 0.24));
+      color: #635fc0;
+      font-size: 11.5px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .dlg-list p {
+      margin: 0;
+      font-size: 11.9px;
+      line-height: 1.72;
+      color: #57516c;
+      user-select: text;
+    }
+
+    .dlg-list strong { color: #3a3350; font-weight: 650; }
+
+    .dlg-meta {
+      margin: 12px 2px 2px;
+      font-size: 10.5px;
+      color: #a29bb4;
+      text-align: right;
+    }
+
+    .dlg-foot {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 14px 22px 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.82);
+      background: rgba(255, 255, 255, 0.3);
+    }
+
+    /* 自定义勾选框：默认白底，勾选后变成蓝紫渐变 */
+    .dlg-agree {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      position: relative;
+      min-width: 0;
+      font-size: 12px;
+      color: #56506b;
+      line-height: 1.45;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .dlg-agree input {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .dlg-box {
+      flex: 0 0 auto;
+      width: 18px;
+      height: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid rgba(120, 110, 160, 0.4);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.95);
+      box-shadow: inset 0 1px 2px rgba(70, 60, 120, 0.08);
+      transition: background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+    }
+
+    .dlg-box::after {
+      content: '✓';
+      font-size: 11.5px;
+      font-weight: 700;
+      line-height: 1;
+      color: #fff;
+      opacity: 0;
+      transform: scale(0.7);
+      transition: opacity 0.14s ease, transform 0.14s ease;
+    }
+
+    .dlg-agree:hover .dlg-box { border-color: rgba(124, 108, 255, 0.6); }
+
+    .dlg-agree input:checked + .dlg-box {
+      border-color: transparent;
+      background: linear-gradient(140deg, #6c8cff 0%, #a06bff 100%);
+      box-shadow: 0 4px 12px rgba(124, 108, 255, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    }
+
+    .dlg-agree input:checked + .dlg-box::after { opacity: 1; transform: scale(1); }
+
+    .dlg-agree input:focus-visible + .dlg-box {
+      box-shadow: 0 0 0 3px rgba(124, 108, 255, 0.24);
+    }
+
+    .dlg-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 9px; }
+
+    .dlg-btn {
+      height: 38px;
+      padding: 0 22px;
+      border: 1px solid rgba(255, 255, 255, 0.4);
+      border-radius: 12px;
+      background: linear-gradient(135deg, #5f7cff 0%, #8f6bff 100%);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 650;
+      box-shadow: 0 10px 22px rgba(95, 124, 255, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+      transition: filter 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .dlg-btn:hover { filter: brightness(1.06); }
+
+    .dlg-btn:disabled {
+      border-color: rgba(255, 255, 255, 0.9);
+      background: rgba(255, 255, 255, 0.55);
+      color: #a8a2b8;
+      box-shadow: none;
+      cursor: default;
+      filter: none;
+    }
+
+    .dlg-btn-ghost {
+      border-color: rgba(255, 255, 255, 0.95);
+      background: rgba(255, 255, 255, 0.78);
+      color: var(--sub);
+      box-shadow: 0 6px 16px rgba(70, 60, 120, 0.1), inset 0 1px 0 #fff;
+    }
+
+    .dlg-btn-ghost:hover { background: #fff; color: var(--text); filter: none; }
+
+    /* 已同意后的「查看」模式：不需要勾选，只留关闭按钮 */
+    .dlg.is-review .dlg-agree { display: none; }
+    .dlg.is-review .dlg-foot { justify-content: flex-end; }
+
+    /* 退出所有账号确认框：窄一点，正文是提示 + 账号列表 */
+    .dlg-logout { width: min(480px, 90vw); }
+
+    .dlg-logout-text {
+      margin: 0 0 10px;
+      font-size: 12.5px;
+      line-height: 1.6;
+      color: #57516c;
+    }
+
+    .dlg-logout-list {
+      list-style: none;
+      margin: 0 0 12px;
+      padding: 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+    }
+
+    .dlg-logout-list li {
+      padding: 5px 11px;
+      border: 1px solid rgba(255, 255, 255, 0.94);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.62);
+      font-size: 11.5px;
+      color: #57516c;
+    }
+
+    .dlg-logout-warn {
+      margin: 0;
+      padding: 9px 12px;
+      border-radius: 10px;
+      background: rgba(255, 170, 60, 0.12);
+      border: 1px solid rgba(255, 170, 60, 0.24);
+      font-size: 11px;
+      line-height: 1.6;
+      color: #9a6a18;
+    }
+
+    /* ------------------------------- 提示条 ------------------------------ */
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 150px;
+      transform: translate(-50%, 10px);
+      z-index: 60;
+      max-width: 70%;
+      padding: 8px 16px;
+      border-radius: 999px;
+      background: rgba(38, 28, 48, 0.82);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      color: #fff;
+      font-size: 12px;
+      box-shadow: 0 12px 30px rgba(30, 18, 42, 0.3);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+
+    .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+    .toast {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* 只有带操作按钮时才允许点击，平时不挡住底下的界面 */
+    .toast.has-action.show { pointer-events: auto; }
+
+    #toast-action {
+      flex: 0 0 auto;
+      padding: 2px 4px;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      color: #ffd2d9;
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      cursor: pointer;
+    }
+
+    #toast-action:hover { color: #fff; background: rgba(255, 255, 255, 0.14); }
+
+    input[type="file"] { display: none; }
+
+    ::-webkit-scrollbar { width: 9px; height: 9px; }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(92, 72, 112, 0.22);
+      border: 3px solid transparent;
+      background-clip: padding-box;
+      border-radius: 999px;
+    }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(92, 72, 112, 0.36); background-clip: padding-box; }
+    ::-webkit-scrollbar-track { background: transparent; }
+
+    /* ============================ 总结答案按钮 ============================ */
+    .summarize-btn {
+      margin-left: auto;
+      height: 31px;
+      padding: 0 15px;
+      border: 1px solid rgba(255, 255, 255, 0.6);
+      border-radius: 12px;
+      background: linear-gradient(135deg, #6c8cff 0%, #a06bff 100%);
+      color: #fff;
+      font-size: 12.5px;
+      font-weight: 650;
+      letter-spacing: 0.2px;
+      box-shadow: 0 8px 20px rgba(124, 108, 255, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+      transition: filter 0.15s ease, transform 0.06s ease, opacity 0.15s ease;
+      white-space: nowrap;
+    }
+
+    .summarize-btn:hover:not(:disabled) { filter: brightness(1.06); }
+    .summarize-btn:active:not(:disabled) { transform: translateY(1px); }
+    .summarize-btn:disabled { opacity: 0.55; cursor: default; }
+
+    /* ============================ API 设置弹窗 ============================ */
+    .api-settings-mask {
+      position: fixed;
+      inset: var(--titlebar-h) 0 0 0;
+      z-index: 46;
+      background: rgba(46, 32, 62, 0.26);
+      backdrop-filter: blur(10px) saturate(160%);
+      -webkit-backdrop-filter: blur(10px) saturate(160%);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+
+    .api-settings-mask.open { opacity: 1; pointer-events: auto; }
+
+    .api-settings {
+      position: fixed;
+      left: 50%;
+      top: calc(50% + var(--titlebar-h) / 2);
+      z-index: 47;
+      width: min(460px, 92vw);
+      max-height: 86vh;
+      display: flex;
+      flex-direction: column;
+      border-radius: 24px;
+      background: linear-gradient(
+        168deg,
+        rgba(255, 255, 255, 0.92) 0%,
+        rgba(247, 249, 255, 0.88) 55%,
+        rgba(243, 243, 255, 0.9) 100%
+      );
+      backdrop-filter: blur(34px) saturate(190%);
+      -webkit-backdrop-filter: blur(34px) saturate(190%);
+      border: 1px solid rgba(255, 255, 255, 0.96);
+      box-shadow: 0 36px 84px rgba(46, 34, 92, 0.3), inset 0 1px 0 #fff;
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, -48%) scale(0.97);
+      transition: opacity 0.22s ease, transform 0.26s cubic-bezier(0.2, 0.8, 0.3, 1);
+      overflow: hidden;
+    }
+
+    .api-settings.open { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%) scale(1); }
+
+    .api-settings-head {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 20px 22px 14px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.72);
+    }
+
+    .api-settings-head .dlg-logo { width: 40px; height: 40px; border-radius: 13px; }
+
+    .api-settings-head h2 {
+      margin: 0 0 2px;
+      font-size: 15.5px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+    }
+
+    .api-settings-head p { margin: 0; font-size: 11.5px; color: var(--muted); }
+
+    .api-settings-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 16px 22px 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 13px;
+    }
+
+    .api-field { display: flex; flex-direction: column; gap: 6px; }
+
+    .api-field label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #4a4258;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .api-field label small { font-weight: 400; color: var(--muted); }
+
+    .api-field input {
+      height: 36px;
+      padding: 0 12px;
+      border: 1px solid rgba(255, 255, 255, 0.9);
+      border-radius: 11px;
+      background: rgba(255, 255, 255, 0.6);
+      color: var(--text);
+      font-size: 12.5px;
+      font-family: inherit;
+      outline: none;
+      user-select: text;
+      box-shadow: inset 0 1px 2px rgba(70, 48, 92, 0.06);
+      transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+    }
+
+    .api-field input:focus {
+      background: rgba(255, 255, 255, 0.95);
+      border-color: rgba(124, 108, 255, 0.55);
+      box-shadow: 0 0 0 3px rgba(124, 108, 255, 0.14);
+    }
+
+    /* 预设服务商快捷按钮 */
+    .api-presets {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .api-preset {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 32px;
+      padding: 0 14px;
+      border: 1px solid rgba(255, 255, 255, 0.9);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.55);
+      color: #4a4258;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease,
+        transform 0.06s ease, box-shadow 0.14s ease;
+    }
+
+    .api-preset:hover {
+      background: rgba(255, 255, 255, 0.92);
+      border-color: rgba(124, 108, 255, 0.45);
+      color: #5b4bc4;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(70, 48, 92, 0.10);
+    }
+
+    .api-preset:active { transform: translateY(0); }
+
+    .api-preset.is-active {
+      background: rgba(124, 108, 255, 0.14);
+      border-color: rgba(124, 108, 255, 0.5);
+      color: #5b4bc4;
+      box-shadow: inset 0 0 0 1px rgba(124, 108, 255, 0.25);
+    }
+
+    .api-preset .preset-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex: 0 0 auto;
+    }
+
+    .api-tip {
+      margin: 0;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: rgba(122, 168, 255, 0.12);
+      border: 1px solid rgba(122, 168, 255, 0.22);
+      font-size: 11px;
+      line-height: 1.65;
+      color: #5a6b9a;
+    }
+
+    .api-settings-foot {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      padding: 14px 22px 18px;
+      border-top: 1px solid rgba(255, 255, 255, 0.72);
+    }
+
+    .api-settings-foot .link-btn { height: 34px; padding: 0 14px; font-size: 12.5px; }
+
+    .api-settings-foot .primary-btn { height: 34px; padding: 0 20px; border-radius: 11px; font-size: 13px; }
+
+    /* ============================ 总结结果弹窗 ============================ */
+    .summary-mask {
+      position: fixed;
+      inset: var(--titlebar-h) 0 0 0;
+      z-index: 48;
+      background: rgba(46, 32, 62, 0.3);
+      backdrop-filter: blur(12px) saturate(160%);
+      -webkit-backdrop-filter: blur(12px) saturate(160%);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+
+    .summary-mask.open { opacity: 1; pointer-events: auto; }
+
+    .summary {
+      position: fixed;
+      left: 50%;
+      top: calc(50% + var(--titlebar-h) / 2);
+      z-index: 49;
+      width: min(720px, 94vw);
+      height: min(78vh, 720px);
+      display: flex;
+      flex-direction: column;
+      border-radius: 26px;
+      background: linear-gradient(
+        168deg,
+        rgba(255, 255, 255, 0.94) 0%,
+        rgba(248, 250, 255, 0.9) 55%,
+        rgba(244, 244, 255, 0.92) 100%
+      );
+      backdrop-filter: blur(36px) saturate(190%);
+      -webkit-backdrop-filter: blur(36px) saturate(190%);
+      border: 1px solid rgba(255, 255, 255, 0.96);
+      box-shadow: 0 40px 96px rgba(46, 34, 92, 0.32), inset 0 1px 0 #fff;
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, -48%) scale(0.97);
+      transition: opacity 0.22s ease, transform 0.26s cubic-bezier(0.2, 0.8, 0.3, 1);
+      overflow: hidden;
+    }
+
+    .summary.open { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%) scale(1); }
+
+    .summary-head {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 18px 22px 14px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.72);
+    }
+
+    .summary-head .dlg-logo { width: 40px; height: 40px; border-radius: 13px; background: linear-gradient(140deg, #f2685f 0%, #c93a6b 100%); }
+
+    .summary-head h2 {
+      margin: 0 0 2px;
+      font-size: 15.5px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+    }
+
+    .summary-head p { margin: 0; font-size: 11.5px; color: var(--muted); }
+
+    .summary-head .spacer { flex: 1 1 auto; }
+
+    .summary-close {
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      border: none;
+      border-radius: 9px;
+      background: transparent;
+      color: #8b8499;
+      font-size: 18px;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .summary-close:hover { background: rgba(255, 255, 255, 0.85); color: var(--text); }
+
+    /* 总结正文：流式渲染的 Markdown，允许选中复制 */
+    .summary-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 18px 24px 24px;
+      user-select: text;
+    }
+
+    #summary-content {
+      font-size: 13.5px;
+      line-height: 1.75;
+      color: #3a3350;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+
+    #summary-content:empty::before {
+      content: '正在提取三家答案…';
+      color: #a49cb4;
+      font-style: italic;
+    }
+
+    /* 总结正文里的 Markdown 元素样式 */
+    #summary-content h1,
+    #summary-content h2,
+    #summary-content h3,
+    #summary-content h4 {
+      margin: 1.2em 0 0.5em;
+      line-height: 1.4;
+      color: #2b2436;
+    }
+
+    #summary-content h1 { font-size: 18px; }
+    #summary-content h2 { font-size: 16px; }
+    #summary-content h3 { font-size: 14.5px; }
+    #summary-content h4 { font-size: 13.5px; }
+
+    #summary-content p { margin: 0.5em 0; }
+    #summary-content ul, #summary-content ol { margin: 0.5em 0; padding-left: 1.4em; }
+    #summary-content li { margin: 0.25em 0; }
+
+    #summary-content table {
+      width: 100%;
+      margin: 0.9em 0;
+      border-collapse: collapse;
+      font-size: 12.5px;
+      border: 1px solid rgba(124, 108, 255, 0.18);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    #summary-content th,
+    #summary-content td {
+      padding: 8px 12px;
+      text-align: left;
+      border: 1px solid rgba(124, 108, 255, 0.14);
+    }
+
+    #summary-content th {
+      background: rgba(122, 168, 255, 0.14);
+      color: #4a4260;
+      font-weight: 650;
+    }
+
+    #summary-content tr:nth-child(even) td { background: rgba(248, 250, 255, 0.7); }
+
+    #summary-content code {
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", monospace;
+      font-size: 0.9em;
+      background: rgba(122, 168, 255, 0.14);
+      color: #4a3f9a;
+      padding: 2px 5px;
+      border-radius: 5px;
+    }
+
+    #summary-content pre {
+      margin: 0.9em 0;
+      padding: 13px 15px;
+      border-radius: 12px;
+      background: rgba(44, 38, 74, 0.92);
+      color: #e9e6f5;
+      overflow-x: auto;
+      line-height: 1.6;
+    }
+
+    #summary-content pre code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+      font-size: 12px;
+    }
+
+    #summary-content blockquote {
+      margin: 0.8em 0;
+      padding: 2px 14px;
+      border-left: 3px solid rgba(124, 108, 255, 0.5);
+      background: rgba(122, 168, 255, 0.08);
+      border-radius: 0 8px 8px 0;
+      color: #5f5872;
+    }
+
+    #summary-content a { color: var(--accent); text-decoration: none; }
+    #summary-content a:hover { text-decoration: underline; }
+
+    #summary-content hr { border: none; border-top: 1px solid rgba(124, 108, 255, 0.22); margin: 1.1em 0; }
+
+    /* 流式输出时的光标闪烁块 */
+    .summary-cursor {
+      display: inline-block;
+      width: 7px;
+      height: 15px;
+      margin-left: 2px;
+      vertical-align: -2px;
+      border-radius: 2px;
+      background: var(--accent);
+      animation: blink 0.9s steps(2, start) infinite;
+    }
+
+    @keyframes blink { 50% { opacity: 0; } }
+
+    .summary-foot {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 11px 22px 14px;
+      border-top: 1px solid rgba(255, 255, 255, 0.72);
+      background: rgba(255, 255, 255, 0.3);
+    }
+
+    .summary-foot .state {
+      font-size: 11.5px;
+      color: var(--muted);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .summary-foot .state .spin {
+      width: 11px;
+      height: 11px;
+      border: 2px solid rgba(224, 69, 90, 0.24);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+
+    .summary-foot .state.done { color: var(--ok); }
+    .summary-foot .state.err { color: var(--err); }
+
+    .summary-copy {
+      height: 30px;
+      padding: 0 14px;
+      border: 1px solid rgba(255, 255, 255, 0.9);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--sub);
+      font-size: 12px;
+      box-shadow: 0 4px 12px rgba(70, 60, 120, 0.08);
+    }
+
+    .summary-copy:hover { background: #fff; color: var(--text); }
+  </style>
+</head>
+<body>
+  <!-- ===== 自绘标题栏（窗口无边框，见 main.js 的 frame: false） ===== -->
+  <header class="titlebar" id="titlebar">
+    <div class="tl-group" id="tl-group">
+      <button type="button" class="tl tl-close" id="win-close" title="关闭" aria-label="关闭窗口"></button>
+      <button type="button" class="tl tl-min" id="win-min" title="最小化" aria-label="最小化窗口"></button>
+      <button type="button" class="tl tl-max" id="win-max" title="最大化" aria-label="最大化窗口"></button>
+    </div>
+    <div class="tb-title" id="tb-title">红笺-群问AI</div>
+  </header>
+
+  <div class="app">
+    <!-- ============================== 左侧面板栏 ============================== -->
+    <aside class="sidebar" id="sidebar">
+      <!-- 背景图（纯装饰，不参与交互） -->
+      <div class="sb-bg" aria-hidden="true"></div>
+
+      <div class="sb-head">
+        <div class="sb-logo">
+          <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+            <rect x="4.2" y="7.4" width="3.3" height="9.2" rx="1.65" fill="#fff" />
+            <rect x="10.35" y="5.2" width="3.3" height="13.6" rx="1.65" fill="#fff" />
+            <rect x="16.5" y="6.8" width="3.3" height="10.4" rx="1.65" fill="#fff" />
+          </svg>
+        </div>
+        <div class="sb-title">
+          <strong>红笺-群问AI</strong>
+          <span>一次提问 · 多模型作答</span>
+        </div>
+        <button type="button" class="sb-toggle" id="btn-collapse" title="收起 / 展开侧栏">«</button>
+      </div>
+
+      <div class="sb-section">
+        <span class="sb-label">AI 模型</span>
+        <button type="button" class="sb-add" id="btn-add-model" title="添加模型">+</button>
+      </div>
+
+      <nav class="sb-list" id="sb-list"></nav>
+
+      <!-- 作者博客入口 -->
+      <div class="sb-blogs">
+        <span class="sb-label">博客</span>
+        <button type="button" class="sb-item sb-blog" data-blog="csdn"
+                data-url="https://blog.csdn.net/qq_31710395" title="CSDN 博客">
+          <span class="sb-avatar" style="background: rgba(240, 85, 58, 0.14); color: #f0553a">C</span>
+          <span class="sb-text">CSDN</span>
+          <span class="sb-ext">↗</span>
+        </button>
+        <button type="button" class="sb-item sb-blog" data-blog="github"
+                data-url="https://github.com/RedJian" title="GitHub">
+          <span class="sb-avatar" style="background: rgba(43, 36, 54, 0.12); color: #2b2436">GH</span>
+          <span class="sb-text">GitHub</span>
+          <span class="sb-ext">↗</span>
+        </button>
+        <button type="button" class="sb-item sb-blog" data-blog="gitee"
+                data-url="https://gitee.com/xiaoranyuan" title="Gitee">
+          <span class="sb-avatar" style="background: rgba(199, 29, 35, 0.12); color: #c71d23">G</span>
+          <span class="sb-text">Gitee</span>
+          <span class="sb-ext">↗</span>
+        </button>
+      </div>
+
+      <!-- 微信公众号：悬停浮现二维码（浮层在 body 末尾，见 .sb-wechat-qr） -->
+      <div class="sb-wechat">
+        <span class="sb-label">公众号</span>
+        <div class="sb-wechat-item" id="wechat-trigger" title="关注公众号「红笺Code」">
+          <span class="sb-avatar">微</span>
+          <span class="sb-text">微信公众号</span>
+          <span class="sb-ext">✦</span>
+        </div>
+      </div>
+
+      <div class="sb-foot">
+        <button type="button" class="sb-item" id="btn-tutorial" title="使用教程">
+          <span class="sb-ico">?</span>
+          <span class="sb-text">使用教程</span>
+        </button>
+        <button type="button" class="sb-item" id="btn-disclaimer" title="免责声明">
+          <span class="sb-ico">
+            <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"
+                 fill="none" stroke="currentColor" stroke-width="1.8"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 3.2 5.2 6v5.4c0 4.1 2.8 7.6 6.8 9.4 4-1.8 6.8-5.3 6.8-9.4V6L12 3.2Z" />
+              <path d="m9.1 12.1 2.1 2.1 3.9-3.9" />
+            </svg>
+          </span>
+          <span class="sb-text">免责声明</span>
+        </button>
+        <button type="button" class="sb-item" id="btn-logout" title="退出所有账号">
+          <span class="sb-ico">
+            <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"
+                 fill="none" stroke="currentColor" stroke-width="1.8"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <path d="m16 17 5-5-5-5" />
+              <path d="M21 12H9" />
+            </svg>
+          </span>
+          <span class="sb-text">退出所有账号</span>
+        </button>
+        <button type="button" class="sb-item" id="btn-settings" title="设置">
+          <span class="sb-ico">⚙</span>
+          <span class="sb-text">设置</span>
+        </button>
+        <button type="button" class="sb-item" id="btn-api-settings" title="API 设置">
+          <span class="sb-ico">🔑</span>
+          <span class="sb-text">API 设置</span>
+        </button>
+      </div>
+    </aside>
+
+    <div class="main">
+      <!-- 面板由 renderer.js 按配置生成，每页最多 3 个 -->
+      <div class="viewport">
+        <div class="columns" id="columns">
+          <!-- 撑高度 + 每页吸附点（不显示内容，由 renderer 按页数生成） -->
+          <div class="snap-track" id="snap-track"></div>
+          <!-- 栏与栏之间的拖动条（renderer 按行生成） -->
+          <div class="gutters" id="gutters"></div>
+        </div>
+      </div>
+
+      <!-- ============================ 底部统一输入框 ============================ -->
+      <footer class="composer">
+        <div class="composer-inner">
+          <div class="composer-card">
+            <div class="editor" id="editor" contenteditable="true" role="textbox"
+                 data-placeholder="输入问题，或直接 Ctrl+V 粘贴截图；一次提问，各栏同时作答（Enter 发送 / Shift+Enter 换行）"></div>
+
+            <div class="composer-foot">
+              <button type="button" class="tool-btn" id="btn-image" title="选择本地图片">图片</button>
+              <button type="button" class="tool-btn" id="btn-clear" title="清空文字与图片">清空</button>
+              <span class="hint" id="hint">Enter 发送 · Shift+Enter 换行 · 各栏同步</span>
+              <button type="button" class="summarize-btn" id="btn-summarize" title="提取三栏最新回答，交给大模型总结">✨ 总结答案</button>
+              <button type="button" class="send-btn" id="btn-send">全部发送</button>
+            </div>
+          </div>
+
+          <div class="statusline">
+            <span class="status" id="status">就绪</span>
+            <div class="pager" id="pager" hidden>
+              <button type="button" class="page-btn" id="page-prev" title="上一页">‹</button>
+              <span class="page-label" id="page-label">1 / 1</span>
+              <button type="button" class="page-btn" id="page-next" title="下一页">›</button>
+            </div>
+            <span class="counter" id="counter"></span>
+          </div>
+        </div>
+
+        <input type="file" id="file-input" accept="image/*" multiple />
+      </footer>
+    </div>
+
+  <!-- ================================ 设置抽屉 ================================ -->
+  <div class="drawer-mask" id="drawer-mask"></div>
+  <aside class="drawer" id="drawer" aria-hidden="true">
+    <header class="drawer-head">
+      <h2>设置<span class="sub">每行最多 3 个，超出自动换行</span></h2>
+      <button type="button" class="drawer-close" id="btn-close-settings" title="关闭">×</button>
+    </header>
+
+    <div class="drawer-body">
+      <section>
+        <h3>已启用 <span class="count" id="enabled-count">0 / 9</span></h3>
+        <p class="tip">顺序即界面顺序；每个模型独占一个会话分区，登录态互不影响。</p>
+        <div class="enabled-list" id="enabled-list"></div>
+      </section>
+
+      <section>
+        <h3>模型库</h3>
+        <p class="tip">点一下加入对比。已加入的模型会显示为虚线状态。</p>
+        <div class="library" id="model-library"></div>
+      </section>
+
+      <section>
+        <h3>自定义模型</h3>
+        <p class="tip">支持任何网页版 AI，填首页地址即可（如 https://www.example.com）。</p>
+        <div class="custom-form">
+          <input type="text" id="custom-name" placeholder="名称，如 通义" maxlength="24" />
+          <input type="text" id="custom-url" placeholder="网址，如 https://www.tongyi.com" spellcheck="false" />
+          <button type="button" class="primary-btn" id="btn-add-custom">添加到面板</button>
+        </div>
+      </section>
+    </div>
+
+    <footer class="drawer-foot">
+      <button type="button" class="link-btn" id="btn-reset">恢复默认</button>
+      <span>设置自动保存，重启后生效</span>
+    </footer>
+  </aside>
+
+  <!-- ============================== 首次使用教程 ============================== -->
+  <div class="tut-mask" id="tutorial-mask"></div>
+  <section class="tut" id="tutorial" aria-hidden="true">
+    <header class="tut-head">
+      <div class="tut-logo">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+          <rect x="4.2" y="7.4" width="3.3" height="9.2" rx="1.65" fill="#fff" />
+          <rect x="10.35" y="5.2" width="3.3" height="13.6" rx="1.65" fill="#fff" />
+          <rect x="16.5" y="6.8" width="3.3" height="10.4" rx="1.65" fill="#fff" />
+        </svg>
+      </div>
+      <div>
+        <h2>欢迎使用 红笺-群问AI</h2>
+        <p>一次提问，多个 AI 网页版同时作答</p>
+      </div>
+    </header>
+
+    <div class="tut-body">
+      <ol class="tut-steps">
+        <li>
+          <span class="tut-num">1</span>
+          <div>
+            <strong>先在每栏登录一次</strong>
+            <p>每一栏都是一个独立的 AI 网页，首次使用请分别登录自己的账号。登录态保存在本机，下次打开不用重复登录。</p>
+          </div>
+        </li>
+        <li>
+          <span class="tut-num">2</span>
+          <div>
+            <strong>在底部输入问题</strong>
+            <p>支持文字和截图：截图后直接 Ctrl+V 粘贴，缩略图会显示在输入框里；Enter 发送，Shift+Enter 换行。</p>
+          </div>
+        </li>
+        <li>
+          <span class="tut-num">3</span>
+          <div>
+            <strong>一次提问，同时发出</strong>
+            <p>点「全部发送」后，各栏先把内容填好，就绪后再同一刻发出；每栏右上角的圆点显示该栏的注入结果。</p>
+          </div>
+        </li>
+        <li>
+          <span class="tut-num">4</span>
+          <div>
+            <strong>加模型、删模型、翻页</strong>
+            <p>点「AI 模型」右边的「+」或设置，可加入 Kimi、元宝、智谱、文心等；每行末尾的小垃圾桶能直接删掉该模型，删错了点提示里的「撤销」即可。超过 3 个自动分页，用右侧滚动条或底部 ‹ › 翻页。</p>
+          </div>
+        </li>
+        <li>
+          <span class="tut-num">5</span>
+          <div>
+            <strong>拖动缝隙、放大某一栏</strong>
+            <p>鼠标移到某一栏顶部，右边会出现「放大」按钮：点一下这栏占 80%，另外两栏收成细条（点细条或按 Esc 恢复）。栏与栏之间的缝隙可以直接拖动，给回答更长的 AI 多分点空间；双击缝隙恢复三等分。</p>
+          </div>
+        </li>
+        <li>
+          <span class="tut-num">6</span>
+          <div>
+            <strong>左侧底部是作者博客</strong>
+            <p>CSDN / GitHub / Gitee 三个入口，点击会用系统浏览器打开。任何时候点左下角的「?」都能再看一遍这个教程。</p>
+          </div>
+        </li>
+      </ol>
+    </div>
+
+    <footer class="tut-foot">
+      <span class="tipline">随时可以在左下角「?」重新查看</span>
+      <button type="button" class="primary-btn" id="btn-tutorial-start">开始使用</button>
+    </footer>
+  </section>
+
+  <!-- ============================== 免责声明 ==============================
+       首次启动强制阅读并同意（不可 Esc / 点遮罩关闭）；同意后持久化，
+       之后只通过左侧栏「免责声明」入口查看。 -->
+  <div class="dlg-mask" id="disclaimer-mask"></div>
+  <section class="dlg" id="disclaimer" role="dialog" aria-modal="true" tabindex="-1"
+           aria-labelledby="disclaimer-title" aria-hidden="true">
+    <header class="dlg-head">
+      <div class="dlg-logo">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"
+             fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3.2 5.2 6v5.4c0 4.1 2.8 7.6 6.8 9.4 4-1.8 6.8-5.3 6.8-9.4V6L12 3.2Z" />
+          <path d="m9.1 12.1 2.1 2.1 3.9-3.9" />
+        </svg>
+      </div>
+      <div class="dlg-heading">
+        <h2 id="disclaimer-title">免责声明</h2>
+        <p id="disclaimer-sub">请在开始使用前仔细阅读以下条款</p>
+      </div>
+    </header>
+
+    <div class="dlg-body" id="disclaimer-body">
+      <ol class="dlg-list">
+        <li>
+          <span class="dlg-num">1</span>
+          <p>本软件（AI对比搜题工具）仅供个人学习、研究及提升工作效率使用。<strong>严禁将本软件用于任何商业用途、非法活动或恶意批量请求。</strong></p>
+        </li>
+        <li>
+          <span class="dlg-num">2</span>
+          <p>本软件通过模拟用户操作调用第三方 AI 平台（如豆包、千问、Kimi、DeepSeek等）。此行为可能违反第三方平台的服务协议，使用本软件存在账号被限制、封禁的风险，<strong>该风险由用户自行承担</strong>。</p>
+        </li>
+        <li>
+          <span class="dlg-num">3</span>
+          <p>本软件内置的“防风控与拟人化”机制旨在降低被检测的概率，但不代表绝对安全。开发者不对因使用本软件导致的账号封禁、数据丢失等承担任何直接或间接责任。</p>
+        </li>
+        <li>
+          <span class="dlg-num">4</span>
+          <p>用户输入的文字、图片等内容将通过本软件发送至第三方平台，<strong>请勿输入任何个人隐私、机密信息或违法违规内容</strong>。</p>
+        </li>
+        <li>
+          <span class="dlg-num">5</span>
+          <p>本软件为独立开发的开源/免费工具，与上述第三方 AI 平台无任何官方关联。</p>
+        </li>
+      </ol>
+      <p class="dlg-meta">最后更新：2026-11-03</p>
+    </div>
+
+    <footer class="dlg-foot">
+      <label class="dlg-agree" id="disclaimer-agree-row">
+        <input type="checkbox" id="disclaimer-check" />
+        <span class="dlg-box"></span>
+        <span>我已阅读并同意上述全部条款</span>
+      </label>
+      <div class="dlg-actions">
+        <button type="button" class="dlg-btn" id="btn-disclaimer-agree" disabled>同意并继续</button>
+        <button type="button" class="dlg-btn dlg-btn-ghost" id="btn-disclaimer-close" hidden>关闭</button>
+      </div>
+    </footer>
+  </section>
+
+  <!-- ============================== 退出所有账号确认框 ==============================
+       复用免责声明的玻璃卡片样式（.dlg / .dlg-mask），只放一个简单的确认提示。 -->
+  <div class="dlg-mask" id="logout-mask"></div>
+  <section class="dlg dlg-logout" id="logout" role="dialog" aria-modal="true" tabindex="-1"
+           aria-labelledby="logout-title" aria-hidden="true">
+    <header class="dlg-head">
+      <div class="dlg-logo">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"
+             fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+          <path d="m16 17 5-5-5-5" />
+          <path d="M21 12H9" />
+        </svg>
+      </div>
+      <div class="dlg-heading">
+        <h2 id="logout-title">退出所有账号</h2>
+        <p id="logout-sub">清除本机保存的全部登录痕迹</p>
+      </div>
+    </header>
+
+    <div class="dlg-body">
+      <p class="dlg-logout-text">将清空以下各栏在本机保存的登录状态（Cookie、本地存储等）：</p>
+      <ul class="dlg-logout-list" id="logout-list"></ul>
+      <p class="dlg-logout-warn">此操作不会打开或操作任何网页，只删除本机数据；下次使用需要重新登录各账号。</p>
+    </div>
+
+    <footer class="dlg-foot">
+      <span class="tipline" style="font-size: 11px; color: var(--muted);">操作不可撤销，请确认</span>
+      <div class="dlg-actions">
+        <button type="button" class="dlg-btn" id="btn-logout-confirm">退出所有账号</button>
+        <button type="button" class="dlg-btn dlg-btn-ghost" id="btn-logout-cancel">取消</button>
+      </div>
+    </footer>
+  </section>
+
+  <div class="toast" id="toast"><span id="toast-text"></span><button type="button" id="toast-action" hidden></button></div>
+
+  <!-- ============================== API 设置弹窗 ==============================
+       配置用于「AI 总结」的大模型 API（OpenAI 兼容格式）。
+       配置保存在 localStorage，重启后自动读取。 -->
+  <div class="api-settings-mask" id="api-settings-mask"></div>
+  <section class="api-settings" id="api-settings" role="dialog" aria-modal="true" tabindex="-1"
+           aria-labelledby="api-settings-title" aria-hidden="true">
+    <header class="api-settings-head">
+      <div class="dlg-logo">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"
+             fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="10" width="16" height="10" rx="2.5" />
+          <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+          <circle cx="12" cy="15" r="1.6" fill="currentColor" stroke="none" />
+        </svg>
+      </div>
+      <div>
+        <h2 id="api-settings-title">API 设置</h2>
+        <p>配置用于「✨ 总结答案」的大模型接口（OpenAI 兼容格式）</p>
+      </div>
+    </header>
+
+    <div class="api-settings-body">
+      <div class="api-field">
+        <label for="api-base-url">服务商 <small>点选预设，自动填入地址与模型</small></label>
+        <div class="api-presets" id="api-presets"></div>
+      </div>
+      <div class="api-field">
+        <label for="api-base-url">Base URL <small>接口地址，以 /v1 结尾</small></label>
+        <input type="text" id="api-base-url" placeholder="https://api.deepseek.com/v1"
+               spellcheck="false" autocomplete="off" />
+      </div>
+      <div class="api-field">
+        <label for="api-key">API Key <small>仅保存在本机 localStorage</small></label>
+        <input type="password" id="api-key" placeholder="sk-..." autocomplete="off" />
+      </div>
+      <div class="api-field">
+        <label for="api-model">Model <small>模型名称</small></label>
+        <input type="text" id="api-model" placeholder="deepseek-chat"
+               spellcheck="false" autocomplete="off" />
+      </div>
+      <p class="api-tip">
+        兼容所有遵循 OpenAI 协议的服务，例如：DeepSeek、Kimi（Moonshot）、千问（DashScope）、
+        OpenAI、以及各类中转 / 本地部署（Ollama 等）。Key 只存本机，不会上传到任何第三方服务器。
+      </p>
+    </div>
+
+    <footer class="api-settings-foot">
+      <button type="button" class="link-btn" id="btn-api-cancel">取消</button>
+      <button type="button" class="primary-btn" id="btn-api-save">保存配置</button>
+    </footer>
+  </section>
+
+  <!-- ============================== 总结结果弹窗 ==============================
+       展示流式输出的 Markdown 总结结果。 -->
+  <div class="summary-mask" id="summary-mask"></div>
+  <section class="summary" id="summary-modal" role="dialog" aria-modal="true" tabindex="-1"
+           aria-labelledby="summary-title" aria-hidden="true">
+    <header class="summary-head">
+      <div class="dlg-logo">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"
+             fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h4l2 3h7A1.5 1.5 0 0 1 20 8.5v9A1.5 1.5 0 0 1 18.5 19h-13A1.5 1.5 0 0 1 4 17.5v-12Z" />
+          <path d="m9 14 2 2 4-4" />
+        </svg>
+      </div>
+      <div>
+        <h2 id="summary-title">AI 总结</h2>
+        <p id="summary-sub">综合三家答案的共识与差异</p>
+      </div>
+      <div class="spacer"></div>
+      <button type="button" class="summary-close" id="btn-summary-close" title="关闭">×</button>
+    </header>
+
+    <div class="summary-body">
+      <div id="summary-content"></div>
+    </div>
+
+    <footer class="summary-foot">
+      <span class="state" id="summary-state">就绪</span>
+      <button type="button" class="summary-copy" id="btn-summary-copy">复制全文</button>
+    </footer>
+  </section>
+
+  <!-- 拖动栏间缝隙时盖住整个窗口，防止指针滑进网页后丢事件 -->
+  <div class="drag-shield" id="drag-shield" hidden></div>
+
+  <!-- 单栏模板 -->
+  <template id="pane-template">
+    <section class="pane">
+      <header class="pane-bar">
+        <span class="brand" title="当前栏对应的站点"><span class="dot"></span><span class="name"></span></span>
+        <div class="nav">
+          <button type="button" class="icon-btn" data-act="back" title="后退">←</button>
+          <button type="button" class="icon-btn" data-act="forward" title="前进">→</button>
+          <button type="button" class="icon-btn" data-act="reload" title="刷新">⟳</button>
+        </div>
+        <input type="text" class="address" spellcheck="false" autocomplete="off" placeholder="输入网址，回车打开" />
+        <button type="button" class="ghost-btn" data-act="open" title="在左侧网页中打开该地址">↵</button>
+        <span class="pane-state" title="尚未注入"></span>
+        <button type="button" class="pane-zoom" data-act="zoom" aria-pressed="false" title="放大这一栏"></button>
+      </header>
+      <div class="stage">
+        <div class="loading"><span class="spinner"></span></div>
+        <div class="webview-host"></div>
+      </div>
+      <!-- 沉浸模式下缩成细条时显示的内容 -->
+      <div class="strip-badge" aria-hidden="true">
+        <span class="strip-avatar"></span>
+        <span class="strip-name"></span>
+        <span class="strip-hint">↩</span>
+      </div>
+    </section>
+  </template>
+
+  <!-- 微信公众号二维码浮层：放在 body 级，用 position: fixed 定位，
+       避免被 .sidebar 的 overflow: hidden 裁掉 -->
+  <div class="sb-wechat-qr" id="wechat-qr" aria-hidden="true">
+    <img src="assets/wechat-qrcode.jpg" alt="微信公众号二维码" />
+    <div class="qr-caption">微信扫码关注<br /><strong>红笺Code</strong></div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

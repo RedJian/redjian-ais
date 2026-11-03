@@ -1,0 +1,44 @@
+{
+  "name": "ai-compare-ask",
+  "version": "1.0.0",
+  "private": true,
+  "description": "红笺-群问AI：一次提问，多个 AI 网页版同时作答",
+  "author": "linran",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "icon": "python scripts/make-icon.py",
+    "pack": "electron-builder --dir",
+    "dist": "npm run pack && node scripts/build-portable.js"
+  },
+  "devDependencies": {
+    "electron": "^45.2.1",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.workbuddy.aicompare",
+    "productName": "红笺-群问AI",
+    "electronDist": "node_modules/electron/dist",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "renderer.js",
+      "assets/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "asarUnpack": [],
+    "compression": "maximum",
+    "npmRebuild": false,
+    "afterPack": "scripts/trim-dist.js",
+    "win": {
+      "icon": "build/icon.ico",
+      "executableName": "AI-Compare"
+    }
+  }
+}
